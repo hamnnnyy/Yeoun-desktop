@@ -4,3 +4,4 @@ export * from './lib/SplatRenderer';
 export * from './lib/PlyReader';
 export * from './lib/GaussianSplatMesh';
 export * from './lib/cameraInterpolate';
+export * from './lib/FrameBuffer';

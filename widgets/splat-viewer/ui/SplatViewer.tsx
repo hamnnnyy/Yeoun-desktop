@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { SplatRenderer, useGaussianStore, interpolateCameraPath } from '@/entities/gaussian';
+import { SplatRenderer, useGaussianStore, interpolateCameraPath, FrameBuffer } from '@/entities/gaussian';
 import { TimelineBar } from '@/features/timeline-control';
 import { VideoImporter } from '@/features/video-import';
 import { TrainingPanel } from '@/features/training-pipeline';
@@ -22,6 +22,8 @@ export function SplatViewer() {
   const fpsRef = useRef(fps);
   useEffect(() => { fpsRef.current = fps; }, [fps]);
 
+  const frameBufferRef = useRef<FrameBuffer | null>(null);
+
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const exportCancelRef = useRef(false);
@@ -33,6 +35,16 @@ export function SplatViewer() {
     rendererRef.current = renderer;
     return () => { renderer.destroy(); rendererRef.current = null; };
   }, []);
+
+  // ── FrameBuffer: 시퀀스 로드 시 초기화 ──────────────────────
+  useEffect(() => {
+    if (!sequenceLoaded || plyFiles.length === 0) return;
+    const fb = new FrameBuffer();
+    fb.load(plyFiles);
+    fb.tick(0);
+    frameBufferRef.current = fb;
+    return () => { fb.destroy(); frameBufferRef.current = null; };
+  }, [sequenceLoaded, plyFiles]);
 
   // ── Load PLY folder ────────────────────────────────────────
   const handleOpenPlyFolder = useCallback(async () => {
@@ -51,18 +63,25 @@ export function SplatViewer() {
   useEffect(() => {
     if (isPlaying || !sequenceLoaded || !rendererRef.current || plyFiles.length === 0) return;
     const frameIdx = Math.min(currentFrame, plyFiles.length - 1);
-    const plyPath = plyFiles[frameIdx];
-    if (!plyPath) return;
+    if (!plyFiles[frameIdx]) return;
 
-    // Apply keyframe camera if available
     if (keyframes.length >= 2) {
       const cam = interpolateCameraPath(keyframes, frameIdx);
       if (cam) rendererRef.current.setCameraState(cam.position, cam.target);
     }
 
-    window.electronAPI?.readPlyFile(plyPath)
-      .then((buf) => { if (buf) rendererRef.current?.loadPlyFrame(buf); })
-      .catch((err) => console.warn(`PLY 로드 실패 (frame ${frameIdx}):`, err));
+    const fb = frameBufferRef.current;
+    if (fb) fb.seek(frameIdx);
+
+    let cancelled = false;
+    const load = async () => {
+      const buf = fb
+        ? await fb.waitFor(frameIdx, 500)
+        : await window.electronAPI?.readPlyFile(plyFiles[frameIdx]);
+      if (!cancelled && buf) rendererRef.current?.loadPlyFrame(buf);
+    };
+    load().catch((err) => console.warn(`PLY 로드 실패 (frame ${frameIdx}):`, err));
+    return () => { cancelled = true; };
   }, [currentFrame, plyFiles, sequenceLoaded, isPlaying, keyframes]);
 
   // ── Playback loop ──────────────────────────────────────────
@@ -72,6 +91,7 @@ export function SplatViewer() {
     let cancelled = false;
     const totalFrames = plyFiles.length;
     const startFrame = currentFrame;
+    const fb = frameBufferRef.current;
 
     const run = async () => {
       const renderer = rendererRef.current;
@@ -80,22 +100,27 @@ export function SplatViewer() {
 
       while (!cancelled) {
         const frameStart = performance.now();
-        const plyPath = plyFiles[frame % totalFrames];
-        if (!plyPath) break;
-        try {
-          // Apply keyframe camera interpolation
-          if (keyframes.length >= 2) {
-            const cam = interpolateCameraPath(keyframes, frame);
-            if (cam) renderer.setCameraState(cam.position, cam.target);
-          }
 
-          const buf = await window.electronAPI?.readPlyFile(plyPath);
+        if (keyframes.length >= 2) {
+          const cam = interpolateCameraPath(keyframes, frame);
+          if (cam) renderer.setCameraState(cam.position, cam.target);
+        }
+
+        try {
+          // 버퍼에서 읽기 (이미 캐시됐으면 즉시 반환)
+          const buf = fb
+            ? await fb.waitFor(frame)
+            : await window.electronAPI?.readPlyFile(plyFiles[frame]);
           if (cancelled) break;
+
           if (buf) {
             await renderer.loadPlyFrame(buf);
             if (cancelled) break;
+
             frame = (frame + 1) % totalFrames;
             setFrame(frame);
+            fb?.tick(frame); // 다음 프리페치 슬롯 채우기
+
             const elapsed = performance.now() - frameStart;
             const minInterval = 1000 / fpsRef.current;
             if (elapsed < minInterval) {
