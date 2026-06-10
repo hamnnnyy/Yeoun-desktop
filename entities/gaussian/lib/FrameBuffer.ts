@@ -1,9 +1,11 @@
-const BUFFER_AHEAD = 30;   // 30프레임 × 6.5MB ≈ 195MB
+import { parsePly, type ParsedSplat } from './PlyReader';
+
+const BUFFER_AHEAD = 30;   // 30프레임 선독 (~195MB parsed)
 const BUFFER_BEHIND = 5;
-const CONCURRENCY = 4;     // 병렬 IPC 읽기 수
+const IPC_CONCURRENCY = 4; // 병렬 IPC 읽기
 
 export class FrameBuffer {
-  private cache = new Map<number, ArrayBuffer>();
+  private cache = new Map<number, ParsedSplat>();
   private inflight = new Set<number>();
   private plyFiles: string[] = [];
   private dead = false;
@@ -21,11 +23,11 @@ export class FrameBuffer {
     this.inflight.clear();
   }
 
-  get(frame: number): ArrayBuffer | null {
+  get(frame: number): ParsedSplat | null {
     return this.cache.get(frame) ?? null;
   }
 
-  /** 재생 중 매 프레임 호출 — 오래된 프레임 퇴거 + 앞쪽 프리페치 */
+  /** 재생 중 매 프레임 호출 — 퇴거 + 프리페치 */
   tick(currentFrame: number) {
     if (this.dead || this.plyFiles.length === 0) return;
     const total = this.plyFiles.length;
@@ -35,7 +37,7 @@ export class FrameBuffer {
       if (behind > BUFFER_BEHIND) this.cache.delete(idx);
     }
 
-    const freeSlots = CONCURRENCY - this.inflight.size;
+    const freeSlots = IPC_CONCURRENCY - this.inflight.size;
     let started = 0;
     for (let i = 0; i < BUFFER_AHEAD && started < freeSlots; i++) {
       const idx = (currentFrame + i) % total;
@@ -46,7 +48,7 @@ export class FrameBuffer {
     }
   }
 
-  /** 스크럽 시 호출 — 새 위치 기준으로 버퍼 재구성 */
+  /** 스크럽 시 — 새 위치 기준으로 버퍼 재구성 */
   seek(frame: number) {
     const total = this.plyFiles.length;
     for (const idx of this.cache.keys()) {
@@ -57,15 +59,17 @@ export class FrameBuffer {
     this.tick(frame);
   }
 
-  /** 프레임이 캐시에 들어올 때까지 대기, 타임아웃 시 직접 IPC 폴백 */
-  async waitFor(frame: number, timeoutMs = 1000): Promise<ArrayBuffer | null> {
+  /** 캐시에 ParsedSplat이 들어올 때까지 대기, 타임아웃 시 직접 읽기/파싱 폴백 */
+  async waitFor(frame: number, timeoutMs = 1000): Promise<ParsedSplat | null> {
     const deadline = performance.now() + timeoutMs;
     while (performance.now() < deadline) {
-      const buf = this.cache.get(frame);
-      if (buf) return buf;
+      const splat = this.cache.get(frame);
+      if (splat) return splat;
       await new Promise<void>((r) => setTimeout(r, 8));
     }
-    return window.electronAPI?.readPlyFile(this.plyFiles[frame]) ?? null;
+    // 타임아웃 — 직접 읽어서 파싱
+    const buf = await window.electronAPI?.readPlyFile(this.plyFiles[frame]);
+    return buf ? parsePly(buf) : null;
   }
 
   private async fetch(idx: number) {
@@ -73,12 +77,14 @@ export class FrameBuffer {
     this.inflight.add(idx);
     try {
       const buf = await window.electronAPI?.readPlyFile(this.plyFiles[idx]);
-      if (!this.dead && buf) this.cache.set(idx, buf);
+      if (!this.dead && buf) {
+        const splat = await parsePly(buf);
+        if (!this.dead) this.cache.set(idx, splat);
+      }
     } catch {
-      // 읽기 실패 시 해당 프레임 스킵
+      // 읽기/파싱 실패 시 해당 프레임 스킵
     } finally {
       this.inflight.delete(idx);
-      // 슬롯이 생겼으니 다음 프리페치 트리거 — 이미 tick이 호출하므로 여기선 생략
     }
   }
 }

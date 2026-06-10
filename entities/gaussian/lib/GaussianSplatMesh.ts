@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { ParsedSplat } from './PlyReader';
+export type { ParsedSplat };
 
 // ─── Shaders ────────────────────────────────────────────────────────────────
 
@@ -194,6 +195,28 @@ export class GaussianSplatMesh extends THREE.Object3D {
     this.colorsAttr.needsUpdate    = true;
     this.opacitiesAttr.needsUpdate = true;
     this.scalesAttr.needsUpdate    = true;
+  }
+
+  /**
+   * 프레임 교체: 기존 GPU 버퍼를 in-place 덮어쓰기.
+   * addSplatScene/removeSplatScene 없이 즉시 반영.
+   */
+  updateFrame(splat: ParsedSplat, camPos?: THREE.Vector3): void {
+    const n = Math.min(splat.count, this.count);
+
+    this.origPos.set(splat.positions.subarray(0, n * 3));
+    this.origCol.set(splat.colors.subarray(0, n * 3));
+    if (splat.opacities) this.origOpa.set(splat.opacities.subarray(0, n));
+    for (let i = 0; i < n; i++) {
+      this.origScl[i] = Math.max(
+        splat.scales[i * 3],
+        splat.scales[i * 3 + 1],
+        splat.scales[i * 3 + 2],
+      );
+    }
+
+    // 위치가 바뀌었으니 즉시 재정렬
+    this.doSort(camPos ?? this.lastCamPos);
   }
 
   dispose(): void {

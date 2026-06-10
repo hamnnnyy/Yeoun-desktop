@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { SplatRenderer, useGaussianStore, interpolateCameraPath, FrameBuffer } from '@/entities/gaussian';
+import { SplatRenderer, useGaussianStore, interpolateCameraPath, FrameBuffer, parsePly } from '@/entities/gaussian';
 import { TimelineBar } from '@/features/timeline-control';
 import { VideoImporter } from '@/features/video-import';
 import { TrainingPanel } from '@/features/training-pipeline';
@@ -75,10 +75,12 @@ export function SplatViewer() {
 
     let cancelled = false;
     const load = async () => {
-      const buf = fb
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      const splat = fb
         ? await fb.waitFor(frameIdx, 500)
-        : await window.electronAPI?.readPlyFile(plyFiles[frameIdx]);
-      if (!cancelled && buf) rendererRef.current?.loadPlyFrame(buf);
+        : await window.electronAPI?.readPlyFile(plyFiles[frameIdx]).then((b) => b ? parsePly(b) : null);
+      if (!cancelled && splat) renderer.loadParsedFrame(splat);
     };
     load().catch((err) => console.warn(`PLY 로드 실패 (frame ${frameIdx}):`, err));
     return () => { cancelled = true; };
@@ -107,14 +109,14 @@ export function SplatViewer() {
         }
 
         try {
-          // 버퍼에서 읽기 (이미 캐시됐으면 즉시 반환)
-          const buf = fb
+          // 버퍼에서 읽기 — 이미 파싱된 ParsedSplat 즉시 반환
+          const splat = fb
             ? await fb.waitFor(frame)
-            : await window.electronAPI?.readPlyFile(plyFiles[frame]);
+            : await window.electronAPI?.readPlyFile(plyFiles[frame]).then((b) => b ? parsePly(b) : null);
           if (cancelled) break;
 
-          if (buf) {
-            await renderer.loadPlyFrame(buf);
+          if (splat) {
+            renderer.loadParsedFrame(splat); // 동기 — GPU 버퍼 직접 갱신
             if (cancelled) break;
 
             frame = (frame + 1) % totalFrames;
