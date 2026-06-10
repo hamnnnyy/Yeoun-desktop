@@ -58,6 +58,12 @@ export interface TrainingResult {
   error?: string;
 }
 
+export interface CameraKeyframe {
+  frame: number;
+  position: [number, number, number];
+  target: [number, number, number];
+}
+
 export interface PlayState {
   isPlaying: boolean;
   currentFrame: number;
@@ -76,4 +82,7 @@ export interface PlayState {
 
   // PLY frames (loaded after training)
   plyFiles: string[];
+
+  // Camera keyframes
+  keyframes: CameraKeyframe[];
 }

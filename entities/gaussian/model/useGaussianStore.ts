@@ -5,6 +5,7 @@ import {
   TrainingLog,
   TrainingStage,
   TrainingResult,
+  CameraKeyframe,
 } from './types';
 
 interface GaussianStore extends PlayState {
@@ -14,6 +15,11 @@ interface GaussianStore extends PlayState {
   setFps: (fps: number) => void;
   loadSequence: (folderPath: string, metadata: SplatMetadata, plyFiles?: string[]) => void;
   unloadSequence: () => void;
+
+  // Keyframe actions
+  addKeyframe: (kf: CameraKeyframe) => void;
+  removeKeyframe: (frame: number) => void;
+  clearKeyframes: () => void;
 
   // Training Actions
   startTraining: (videoPath: string) => void;
@@ -33,6 +39,7 @@ export const useGaussianStore = create<GaussianStore>((set) => ({
   sequenceLoaded: false,
   folderPath: null,
   plyFiles: [],
+  keyframes: [],
 
   // Training state
   isTraining: false,
@@ -58,6 +65,7 @@ export const useGaussianStore = create<GaussianStore>((set) => ({
       plyFiles,
       currentFrame: 0,
       isPlaying: false,
+      keyframes: [],
     }),
 
   unloadSequence: () =>
@@ -68,7 +76,19 @@ export const useGaussianStore = create<GaussianStore>((set) => ({
       plyFiles: [],
       currentFrame: 0,
       isPlaying: false,
+      keyframes: [],
     }),
+
+  addKeyframe: (kf) =>
+    set((state) => {
+      const filtered = state.keyframes.filter((k) => k.frame !== kf.frame);
+      return { keyframes: [...filtered, kf].sort((a, b) => a.frame - b.frame) };
+    }),
+
+  removeKeyframe: (frame) =>
+    set((state) => ({ keyframes: state.keyframes.filter((k) => k.frame !== frame) })),
+
+  clearKeyframes: () => set({ keyframes: [] }),
 
   startTraining: (_videoPath) =>
     set({
@@ -81,6 +101,7 @@ export const useGaussianStore = create<GaussianStore>((set) => ({
       sequenceLoaded: false,
       folderPath: null,
       plyFiles: [],
+      keyframes: [],
       isPlaying: false,
     }),
 
@@ -96,7 +117,7 @@ export const useGaussianStore = create<GaussianStore>((set) => ({
       trainingLogs: [
         ...state.trainingLogs,
         { ...log, timestamp: Date.now() },
-      ].slice(-200), // 최대 200개 로그 유지
+      ].slice(-200),
     })),
 
   finishTraining: (result) =>

@@ -13,6 +13,7 @@ export interface ParsedSplat {
   colors: Float32Array;    // [r, g, b, ...] normalized 0–1
   scales: Float32Array;    // [sx, sy, sz, ...]
   rotations: Float32Array; // [qw, qx, qy, qz, ...]
+  opacities: Float32Array; // sigmoid(raw_opacity), 0–1
   count: number;
 }
 
@@ -112,6 +113,7 @@ function readBinary(buffer: ArrayBuffer, header: PlyHeader): ParsedSplat {
   const colors = new Float32Array(vertexCount * 3);
   const scales = new Float32Array(vertexCount * 3);
   const rotations = new Float32Array(vertexCount * 4);
+  const opacities = new Float32Array(vertexCount);
 
   const getFloat = (base: number, name: string): number => {
     if (!(name in offsets)) return 0;
@@ -157,9 +159,12 @@ function readBinary(buffer: ArrayBuffer, header: PlyHeader): ParsedSplat {
     rotations[i * 4 + 1] = getFloat(base, 'rot_1');
     rotations[i * 4 + 2] = getFloat(base, 'rot_2');
     rotations[i * 4 + 3] = getFloat(base, 'rot_3');
+
+    const rawOpa = 'opacity' in offsets ? view.getFloat32(base + offsets['opacity'], true) : 2.0;
+    opacities[i] = 1.0 / (1.0 + Math.exp(-rawOpa));
   }
 
-  return { positions, colors, scales, rotations, count: vertexCount };
+  return { positions, colors, scales, rotations, opacities, count: vertexCount };
 }
 
 // ───────────────────────────────────────────────
@@ -178,6 +183,7 @@ function readAscii(buffer: ArrayBuffer, header: PlyHeader): ParsedSplat {
   const colors = new Float32Array(vertexCount * 3);
   const scales = new Float32Array(vertexCount * 3);
   const rotations = new Float32Array(vertexCount * 4);
+  const opacities = new Float32Array(vertexCount);
 
   const get = (vals: string[], name: string): number => {
     const idx = propIndex[name];
@@ -209,9 +215,12 @@ function readAscii(buffer: ArrayBuffer, header: PlyHeader): ParsedSplat {
     rotations[i * 4 + 1] = get(vals, 'rot_1');
     rotations[i * 4 + 2] = get(vals, 'rot_2');
     rotations[i * 4 + 3] = get(vals, 'rot_3');
+
+    const rawOpa = 'opacity' in propIndex ? get(vals, 'opacity') : 2.0;
+    opacities[i] = 1.0 / (1.0 + Math.exp(-rawOpa));
   }
 
-  return { positions, colors, scales, rotations, count: vertexCount };
+  return { positions, colors, scales, rotations, opacities, count: vertexCount };
 }
 
 // ───────────────────────────────────────────────

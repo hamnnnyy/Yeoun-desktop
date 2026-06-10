@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Video } from 'lucide-react';
+import { Video, FolderOpen } from 'lucide-react';
 import { useGaussianStore } from '@/entities/gaussian';
 import { Button } from '@/shared/ui/button';
 
@@ -14,22 +14,43 @@ export function VideoImporter() {
     setTrainingError,
   } = useGaussianStore();
 
+  const handleLoadOutput = async () => {
+    const result = await window.electronAPI?.openOutputFolder();
+    if (!result) return;
+
+    if (result.plyFiles.length === 0) {
+      console.error(
+        '[LoadOutput] point_cloud.ply 없음. 선택 폴더:', result.folderPath,
+        '\n→ train.py --model_path 로 지정한 output 폴더를 선택하세요.',
+        '\n→ 내부에 point_cloud/iteration_*/point_cloud.ply 가 있어야 합니다.',
+      );
+      window.alert(
+        'PLY 파일을 찾을 수 없습니다.\n\n선택한 폴더: ' + result.folderPath +
+        '\n\ntrain.py 실행 시 --model_path 로 지정한 output 폴더를 선택하세요.\n(폴더 안에 point_cloud/iteration_*/point_cloud.ply 가 있어야 합니다)',
+      );
+      return;
+    }
+
+    finishTraining({
+      success: true,
+      folderPath: result.folderPath,
+      plyFiles: result.plyFiles,
+      fileCount: result.plyFiles.length,
+    });
+  };
+
   const handleImportVideo = async () => {
     try {
-      // 1. 파일 선택 다이얼로그
-      const result = await window.electronAPI?.openVideoFile();
-      if (!result?.videoPath) return;
+      const result = await window.electronAPI?.openVideoFiles();
+      if (!result?.videoPaths?.length) return;
 
-      // 2. 스토어 초기화
-      startTraining(result.videoPath);
+      startTraining(result.videoPaths[0]);
 
-      // 3. IPC 이벤트 리스너 등록
       window.electronAPI?.onTrainingProgress((progress, status) => {
         updateTrainingProgress(progress, status);
       });
 
       window.electronAPI?.onTrainingStage((stage) => {
-        // stage 변경은 progress와 함께 updateTrainingProgress에서 처리됨
         appendLog({
           stage: stage as Parameters<typeof appendLog>[0]['stage'],
           message: `[스테이지 전환] → ${stage}`,
@@ -50,10 +71,8 @@ export function VideoImporter() {
         window.electronAPI?.removeAllTrainingListeners?.();
       });
 
-      // 4. 트레이닝 실행
-      const trainingResult = await window.electronAPI?.startLocalTraining(result.videoPath);
+      const trainingResult = await window.electronAPI?.startLocalTraining(result.videoPaths);
 
-      // 5. 완료 처리
       window.electronAPI?.removeAllTrainingListeners?.();
 
       if (trainingResult?.success) {
@@ -74,13 +93,26 @@ export function VideoImporter() {
   };
 
   return (
-    <Button
-      variant="glass"
-      onClick={handleImportVideo}
-      className="gap-2 bg-blue-500/20 border-blue-400/30 hover:bg-blue-500/30 shadow-[0_4px_20px_rgba(59,130,246,0.3)]"
-    >
-      <Video size={18} className="text-blue-200" />
-      <span className="font-semibold text-blue-50">Import MP4 to Train</span>
-    </Button>
+    <div className="flex gap-2">
+      <Button
+        variant="glass"
+        size="sm"
+        onClick={handleLoadOutput}
+        className="gap-1.5 rounded-[2px]"
+        title="터미널에서 학습한 output 폴더 불러오기"
+      >
+        <FolderOpen size={14} className="text-[#7A7060]" />
+        <span className="text-[#7A7060]">Load Output</span>
+      </Button>
+
+      <Button
+        variant="glass"
+        onClick={handleImportVideo}
+        className="gap-2 rounded-[2px] border-[#C4A055]/25 hover:border-[#C4A055]/50"
+      >
+        <Video size={16} className="text-[#C4A055]/80" />
+        <span className="font-medium text-[#EDE5D5]/80">Import Multi-View Videos</span>
+      </Button>
+    </div>
   );
 }
